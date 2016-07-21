@@ -1,2 +1,0 @@
-# smartconfig
-for smartconfig
