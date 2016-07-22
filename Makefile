@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -ffloat-store -DHAVE_CONFIG_H   -D_U_="__attribute__((unused))" -I. -I../libpcap  -g -O2 
-LDFLAGS = -lcrypto ../libpcap/libpcap.a  -lnl
+LDFLAGS = -lcrypto ../libpcap/libpcap.a  -lnl -lrt
 
 
 smartconfig: smartconfig.o
