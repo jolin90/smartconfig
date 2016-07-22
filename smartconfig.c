@@ -103,7 +103,7 @@ static int iface_set_freq(int sockfd, const char *device, int freq)
 	if (!device)
 		printf("%s: %s is null\n", __func__, device);
 
-	// printf("sockfd:%d, device:%s, freq:%d\n", sockfd, device, freq);
+	printf("sockfd:%d, device:%s, freq:%d\n", sockfd, device, freq);
 
 	memset(&iwr, 0, sizeof(iwr));
 	strlcpy(iwr.ifr_name, device, sizeof(iwr.ifr_name));
@@ -330,8 +330,8 @@ static u_int ieee802_11_radio_print(struct smartconfig *sc,
 
 	hdr = (const struct ieee80211_radiotap_header *)p;
 	len = EXTRACT_LE_16BITS(&hdr->it_len);
-	channel = EXTRACT_LE_16BITS(p + 18);
-	//channel = EXTRACT_LE_16BITS(p + 10);
+	//channel = EXTRACT_LE_16BITS(p + 18);
+	channel = EXTRACT_LE_16BITS(p + 10);
 
 	return len + ieee802_11_print(sc, p + len, length - len, caplen - len,
 								  channel);
@@ -447,6 +447,13 @@ int main(int argc, char *argv[])
 		error("%s: pcap_set_timeout failed: %s",
 			  device, pcap_statustostr(status));
 
+#if 0
+	status = pcap_set_buffer_size(pd, 4*1024);
+	if (status != 0)
+		error("%s: Can't set buffer size: %s",
+				device, pcap_statustostr(status));
+#endif
+
 	status = pcap_activate(pd);
 	if (status < 0) {
 		/*
@@ -484,10 +491,10 @@ int main(int argc, char *argv[])
 	sc->timerid = timerid;
 
 	struct itimerspec it;
-	it.it_interval.tv_sec = 0;
-	it.it_interval.tv_nsec = 1000 * 1000 * 500;
-	it.it_value.tv_sec = 0;
-	it.it_value.tv_nsec = 1000 * 1000 * 500;
+	it.it_interval.tv_sec = 1;
+	it.it_interval.tv_nsec = 0; //1000 * 1000 * 900;
+	it.it_value.tv_sec = 1;
+	it.it_value.tv_nsec = 0;//1000 * 1000 * 900;
 
 	sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 	if (sock_fd == -1) {
