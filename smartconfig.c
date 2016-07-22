@@ -32,6 +32,7 @@
 #include <linux/wireless.h>
 #include <signal.h>
 #include <time.h>
+#include <pthread.h>
 
 #include "smartconfig.h"
 #include "extract.h"
@@ -39,6 +40,9 @@
 static u_char *program_name;
 static u_int packets_captured;
 struct smartconfig SC;
+static u_int get_source_mac = 0;
+static u_int change_channel = 0;
+static u_char from_source_mac[3][6] = { 0 };
 
 static struct ieee80211_channel channels[] = {
 	CHAN2G(1, 2412),
@@ -91,56 +95,58 @@ void warning(const char *fmt, ...)
 	}
 }
 
-static int iface_set_monitor(int sockfd, const char *device)
+static int iface_set_freq(int sockfd, const char *device, int freq)
+{
+	struct iwreq iwr;
+	int ret = 0;
+
+	if (!device)
+		printf("%s: %s is null\n", __func__, device);
+
+	// printf("sockfd:%d, device:%s, freq:%d\n", sockfd, device, freq);
+
+	memset(&iwr, 0, sizeof(iwr));
+	strlcpy(iwr.ifr_name, device, sizeof(iwr.ifr_name));
+	iwr.u.freq.m = freq * 100000;
+	iwr.u.freq.e = 1;
+
+	if (ioctl(sockfd, SIOCSIWFREQ, &iwr) < 0) {
+		perror("ioctl[SIOCSIWFREQ]");
+		ret = -1;
+	}
+
+	return ret;
+}
+
+static int iface_set_mode(int sockfd, const char *device, int mode)
 {
 	int oldflags;
 	struct ifreq ifr;
 	struct iwreq ireq;
 	int sock_fd;
 
-	sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-	if (sock_fd == -1) {
-		fprintf(stderr, "socket: %s", pcap_strerror(errno));
-		return PCAP_ERROR;
+	if (!sockfd) {
+		sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+		if (sock_fd == -1) {
+			fprintf(stderr, "socket: %s", pcap_strerror(errno));
+			return PCAP_ERROR;
+		}
+	} else {
+		sock_fd = sockfd;
 	}
 
-	/*
-	 * First, take the interface down if it's up; otherwise, we
-	 * might get EBUSY.
-	 */
-	memset(&ifr, 0, sizeof(ifr));
-	strlcpy(ifr.ifr_name, device, sizeof(ifr.ifr_name));
-
-	if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr) == -1) {
-		fprintf(stderr, "%s: Can't get flags: %s", device, strerror(errno));
-		return PCAP_ERROR;
-	}
-
-	oldflags = ifr.ifr_flags;
-
-	ifr.ifr_flags &= ~IFF_UP;
-	if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) == -1) {
-		fprintf(stderr, "%s: Can't set flags: %s", device, strerror(errno));
-		return PCAP_ERROR;
-	}
-
-	/*
-	 * Then turn monitor mode on.
-	 */
 	strlcpy(ireq.ifr_ifrn.ifrn_name, device, sizeof ireq.ifr_ifrn.ifrn_name);
-	ireq.u.mode = IW_MODE_MONITOR;
+	//ireq.u.mode = IW_MODE_MONITOR;
+	ireq.u.mode = mode;
 	if (ioctl(sock_fd, SIOCSIWMODE, &ireq) == -1) {
+		printf("%s %d\n", __func__, __LINE__);
 		return PCAP_ERROR;
 	}
 
-	oldflags |= IFF_UP;
-	ifr.ifr_flags = oldflags;
-	if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) == -1) {
-		fprintf(stderr, "%s: Can't set flags: %s", device, strerror(errno));
-		return PCAP_ERROR;
+	if (!sockfd) {
+		close(sock_fd);
 	}
 
-	close(sock_fd);
 	return 1;
 }
 
@@ -156,6 +162,7 @@ void data_frame_dump(const u_char * pbuf, int buf_len)
 			printf("\n");
 		j++;
 	}
+
 	printf("\n");
 }
 
@@ -164,28 +171,32 @@ static const u_char mcast_key1[] = { 0x01, 0x00, 0x5e, 0x01, 0x68, 0x2b };
 static const u_char mcast_key2[] = { 0x01, 0x00, 0x5e, 0x02, 0x5c, 0x31 };
 static const u_char mcast_key3[] = { 0x01, 0x00, 0x5e, 0x03, 0x00, 0x00 };
 
-static void check_from_source_mac(struct smartconfig *sc, const u_char * p,
-								  uint16_t channel)
+static void check_from_source_mac()
 {
-	u_char *source0 = (char *)&sc->from_source_mac[0];
-	u_char *source1 = (char *)&sc->from_source_mac[1];
-	u_char *source2 = (char *)&sc->from_source_mac[2];
+	struct smartconfig *sc = &SC;
+
+	u_char *source0 = (u_char *) & from_source_mac[0];
+	u_char *source1 = (u_char *) & from_source_mac[1];
+	u_char *source2 = (u_char *) & from_source_mac[2];
 
 	if ((source0[0] == 0) && (source0[1] == 0) &&
 		(source0[2] == 0) && (source0[3] == 0) &&
 		(source0[4] == 0) && (source0[5] == 0))
 		return;
+
 	if ((source1[0] == 0) && (source1[1] == 0) &&
 		(source1[2] == 0) && (source1[3] == 0) &&
 		(source1[4] == 0) && (source1[5] == 0))
 		return;
+
 	if ((source2[0] == 0) && (source2[1] == 0) &&
 		(source2[2] == 0) && (source2[3] == 0) &&
 		(source2[4] == 0) && (source2[5] == 0))
 		return;
 
 	if (!memcmp(source0, source1, 6) && !memcmp(source2, source1, 6)) {
-
+		change_channel = 1;
+		get_source_mac = 1;
 #if 0
 		printf("=================================\n");
 		data_frame_dump(source0, 6);
@@ -193,9 +204,8 @@ static void check_from_source_mac(struct smartconfig *sc, const u_char * p,
 		data_frame_dump(source2, 6);
 		printf("=================================\n\n\n");
 #endif
-		sc->get_source_mac = 1;
-		sc->channelfreq = channel;
-		printf("channel:%d\n", sc->channelfreq);
+		usleep(100);
+		iface_set_freq(sc->sock_fd, sc->device, sc->channelfreq);
 	}
 }
 
@@ -203,18 +213,8 @@ static void check_sconf_integrity(struct smartconfig *sc)
 {
 	int i, count = 0;
 
-	//printf("ssid_len:%d, psk_len:%d\n", sc->ssid_len, sc->psk_len);
-	//printf("channel:%d\n", sc->channelfreq);
-
-#if 0
-	for (i = 4; i < 6; i++) {
-		if (sc->slm[i].flag) {
-			data_frame_dump(sc->slm[i].source, 6);
-			data_frame_dump(sc->slm[i].mcast, 6);
-		}
-	}
-	printf("\n");
-#endif
+	// printf("ssid_len:%d, psk_len:%d\n", sc->ssid_len, sc->psk_len);
+	// printf("channel:%d\n", sc->channelfreq);
 
 	int len = (sc->ssid_len > sc->psk_len ? sc->ssid_len : sc->psk_len);
 	if (len > 0) {
@@ -238,12 +238,12 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 #define ADDR3  (p + 16)
 #define ADDR4  (p + 24)
 
-	register const char *mcast;
-	register const char *source;
+	register const char *mcast = NULL;
+	register const char *source = NULL;
 
-	u_char *source0 = (char *)&sc->from_source_mac[0];
-	u_char *source1 = (char *)&sc->from_source_mac[1];
-	u_char *source2 = (char *)&sc->from_source_mac[2];
+	u_char *source0 = (u_char *) & from_source_mac[0];
+	u_char *source1 = (u_char *) & from_source_mac[1];
+	u_char *source2 = (u_char *) & from_source_mac[2];
 
 	if (!FC_TO_DS(fc) && FC_FROM_DS(fc)) {
 		mcast = ADDR1;
@@ -252,11 +252,10 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 		mcast = ADDR3;
 		source = ADDR2;
 	}
+	//data_frame_dump(mcast, 6);
+	//data_frame_dump(source, 6);
 
-	data_frame_dump(mcast, 6);
-	data_frame_dump(source, 6);
-
-	if (sc->get_source_mac) {
+	if (get_source_mac) {
 		if (!memcmp(source0, source, 6)) {
 
 			if (!memcmp(mcast_key3, mcast, 4)) {
@@ -269,21 +268,29 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 				sc->slm[index].flag = 1;
 			}
 
-			check_sconf_integrity(sc);
 		}
 
 	} else {
 
-		if (!memcmp(mcast_key0, mcast, 6))
+		if (!memcmp(mcast_key0, mcast, 6)) {
+			sc->channelfreq = channel;
+			printf("channel:%d\n", sc->channelfreq);
 			memcpy(source0, source, 6);
+		}
 
-		if (!memcmp(mcast_key1, mcast, 6))
+		if (!memcmp(mcast_key1, mcast, 6)) {
+			sc->channelfreq = channel;
+			printf("channel:%d\n", sc->channelfreq);
 			memcpy(source1, source, 6);
+		}
 
-		if (!memcmp(mcast_key2, mcast, 6))
+		if (!memcmp(mcast_key2, mcast, 6)) {
+			sc->channelfreq = channel;
+			printf("channel:%d\n", sc->channelfreq);
 			memcpy(source2, source, 6);
+		}
 
-		check_from_source_mac(sc, source, channel);
+		check_from_source_mac(sc);
 	}
 
 #undef ADDR1
@@ -300,8 +307,10 @@ static u_int ieee802_11_print(struct smartconfig *sc,
 
 	fc = EXTRACT_LE_16BITS(p);
 
-	if (FC_TYPE(fc) == T_DATA)
+	if (FC_TYPE(fc) == T_DATA) {
+		// printf("%d\n", ++packets_captured);
 		data_header_print(sc, fc, p, channel);
+	}
 
 	return 0;
 }
@@ -315,12 +324,14 @@ static u_int ieee802_11_radio_print(struct smartconfig *sc,
 	u_int len;
 
 	if (caplen < sizeof(*hdr)) {
+		printf("%s %d caplen:%d\n", __func__, __LINE__, caplen);
 		return caplen;
 	}
 
 	hdr = (const struct ieee80211_radiotap_header *)p;
 	len = EXTRACT_LE_16BITS(&hdr->it_len);
-	channel = EXTRACT_LE_16BITS(p + 10);
+	channel = EXTRACT_LE_16BITS(p + 18);
+	//channel = EXTRACT_LE_16BITS(p + 10);
 
 	return len + ieee802_11_print(sc, p + len, length - len, caplen - len,
 								  channel);
@@ -329,6 +340,7 @@ static u_int ieee802_11_radio_print(struct smartconfig *sc,
 u_int ieee802_11_radio_if_print(struct smartconfig * sc,
 								const struct pcap_pkthdr * h, const u_char * p)
 {
+	// printf("%s %d\n", __func__, __LINE__);
 	return ieee802_11_radio_print(sc, p, h->len, h->caplen);
 }
 
@@ -338,37 +350,17 @@ static void print_packet(u_char * user, const struct pcap_pkthdr *h,
 	ieee802_11_radio_if_print((struct smartconfig *)user, h, sp);
 }
 
-static int iface_set_freq(int sockfd, const char *device, int freq)
-{
-	struct iwreq iwr;
-	int ret = 0;
-
-	if (!device)
-		printf("%s: %s is null\n", __func__, device);
-
-	printf("sockfd:%d, device:%s, freq:%d\n", sockfd, device, freq);
-
-	memset(&iwr, 0, sizeof(iwr));
-	strlcpy(iwr.ifr_name, device, sizeof(iwr.ifr_name));
-	iwr.u.freq.m = freq * 100000;
-	iwr.u.freq.e = 1;
-
-	if (ioctl(sockfd, SIOCSIWFREQ, &iwr) < 0) {
-		perror("ioctl[SIOCSIWFREQ]");
-		ret = -1;
-	}
-
-	return ret;
-}
-
 void timer_thread(union sigval v)
 {
 	static int index = 0;
 	int freq = 2412;
 	struct smartconfig *sc = &SC;
 
-	iface_set_freq(sc->sock_fd, sc->device, channels[index].center_freq);
+	if (!change_channel)
+		iface_set_freq(sc->sock_fd, sc->device, channels[index].center_freq);
 	index = ((++index) % 14);
+
+	check_sconf_integrity(sc);
 }
 
 void cleanup(int signo)
@@ -386,8 +378,12 @@ void cleanup(int signo)
 	printf("channel:%d\n", sc->channelfreq);
 	pcap_close(sc->pd);
 
-	if (sc->sock_fd)
+	if (sc->sock_fd) {
+		printf("close sock_fd:%d\n", sc->sock_fd);
 		close(sc->sock_fd);
+	}
+
+	iface_set_mode(0, sc->device, IW_MODE_INFRA);
 	exit(0);
 }
 
@@ -423,18 +419,27 @@ int main(int argc, char *argv[])
 	signal(SIGSEGV, cleanup);
 	signal(SIGKILL, cleanup);
 
-	if (!iface_set_monitor(sock_fd, device)) {
-		error("Can't enter monitor mode");
-		exit(1);
-	}
+	if (iface_set_mode(0, sc->device, IW_MODE_MONITOR) < 0)
+		error("Can't set mode");
+	sleep(1);
 
 	pd = pcap_create(device, ebuf);
 	if (pd == NULL)
 		error("%s", ebuf);
 
+	status = pcap_set_immediate_mode(pd, 1);
+	if (status != 0)
+		error("%s: Can't set immediate mode: %s",
+			  device, pcap_statustostr(status));
+
 	status = pcap_set_snaplen(pd, 256);
 	if (status != 0)
 		error("%s: Can't set snapshot length: %s",
+			  device, pcap_statustostr(status));
+
+	status = pcap_set_promisc(pd, 1);
+	if (status != 0)
+		error("%s: Can't set promiscuous mode: %s",
 			  device, pcap_statustostr(status));
 
 	status = pcap_set_timeout(pd, 1000);
@@ -476,6 +481,7 @@ int main(int argc, char *argv[])
 		perror("fail to timer_create");
 		exit(-1);
 	}
+	sc->timerid = timerid;
 
 	struct itimerspec it;
 	it.it_interval.tv_sec = 0;
@@ -488,7 +494,6 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "socket: %s", pcap_strerror(errno));
 		return PCAP_ERROR;
 	}
-
 	sc->sock_fd = sock_fd;
 
 	if (timer_settime(timerid, 0, &it, NULL) == -1) {

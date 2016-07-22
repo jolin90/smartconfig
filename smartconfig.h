@@ -71,6 +71,8 @@ struct smartconfig {
 	uint16_t channelfreq;
 	u_int sock_fd;
 	const char *device;
+	timer_t timerid;
+	u_int change_channel;
 };
 
 struct ieee80211_radiotap_header {
