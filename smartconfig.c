@@ -205,6 +205,7 @@ static void check_from_source_mac()
 		printf("=================================\n\n\n");
 #endif
 		usleep(100);
+		printf("get source mac address\n");
 		iface_set_freq(sc->sock_fd, sc->device, sc->channelfreq);
 	}
 }
@@ -353,14 +354,19 @@ static void print_packet(u_char * user, const struct pcap_pkthdr *h,
 void timer_thread(union sigval v)
 {
 	static int index = 0;
-	int freq = 2412;
 	struct smartconfig *sc = &SC;
 
 	if (!change_channel)
 		iface_set_freq(sc->sock_fd, sc->device, channels[index].center_freq);
-	index = ((++index) % 14);
 
 	check_sconf_integrity(sc);
+
+	index = ((++index) % 14);
+
+	if (iface_set_mode(sc->sock_fd, sc->device, IW_MODE_MONITOR) < 0) {
+		error("Can't set mode");
+		exit(1);
+	}
 }
 
 void cleanup(int signo)
@@ -376,7 +382,11 @@ void cleanup(int signo)
 
 	printf("ssid:%s, psk:%s\n", sc->ssid, sc->psk);
 	printf("channel:%d\n", sc->channelfreq);
-	pcap_close(sc->pd);
+
+	if (sc->pd) {
+		pcap_close(sc->pd);
+		sc->pd = NULL;
+	}
 
 	if (sc->sock_fd) {
 		printf("close sock_fd:%d\n", sc->sock_fd);
@@ -448,10 +458,10 @@ int main(int argc, char *argv[])
 			  device, pcap_statustostr(status));
 
 #if 0
-	status = pcap_set_buffer_size(pd, 4*1024);
+	status = pcap_set_buffer_size(pd, 4 * 1024);
 	if (status != 0)
 		error("%s: Can't set buffer size: %s",
-				device, pcap_statustostr(status));
+			  device, pcap_statustostr(status));
 #endif
 
 	status = pcap_activate(pd);
@@ -492,9 +502,9 @@ int main(int argc, char *argv[])
 
 	struct itimerspec it;
 	it.it_interval.tv_sec = 1;
-	it.it_interval.tv_nsec = 0; //1000 * 1000 * 900;
+	it.it_interval.tv_nsec = 0;	// 1000 * 1000 * 900;
 	it.it_value.tv_sec = 1;
-	it.it_value.tv_nsec = 0;//1000 * 1000 * 900;
+	it.it_value.tv_nsec = 0;	// 1000 * 1000 * 900;
 
 	sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 	if (sock_fd == -1) {
