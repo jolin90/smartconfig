@@ -204,6 +204,7 @@ static void check_from_source_mac()
 		data_frame_dump(source2, 6);
 		printf("=================================\n\n\n");
 #endif
+		timer_delete(sc->timerid);
 		usleep(100);
 		printf("get source mac address\n");
 		iface_set_freq(sc->sock_fd, sc->device, sc->channelfreq);
@@ -269,6 +270,7 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 				sc->slm[index].flag = 1;
 			}
 
+			check_sconf_integrity(sc);
 		}
 
 	} else {
@@ -356,17 +358,8 @@ void timer_thread(union sigval v)
 	static int index = 0;
 	struct smartconfig *sc = &SC;
 
-	if (!change_channel)
-		iface_set_freq(sc->sock_fd, sc->device, channels[index].center_freq);
-
-	check_sconf_integrity(sc);
-
+	iface_set_freq(sc->sock_fd, sc->device, channels[index].center_freq);
 	index = ((++index) % 14);
-
-	if (iface_set_mode(sc->sock_fd, sc->device, IW_MODE_MONITOR) < 0) {
-		error("Can't set mode");
-		exit(1);
-	}
 }
 
 void cleanup(int signo)
