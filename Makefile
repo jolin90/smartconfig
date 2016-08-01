@@ -1,6 +1,6 @@
 Q = @
 CC = gcc
-CFLAGS = -ffloat-store -DHAVE_CONFIG_H   -D_U_="__attribute__((unused))" -I. -I../libpcap  -g -O2 
+CFLAGS = -ffloat-store -DHAVE_CONFIG_H   -D_U_="__attribute__((unused))" -I. -I../libpcap -Wall -g -O2  
 LDFLAGS = -lcrypto ../libpcap/libpcap.a  -lnl -lrt
 
 RM			:= rm -f
@@ -9,7 +9,7 @@ MKDIR		:= mkdir -p
 MV			:= mv -f
 SED			:= sed
 
-OBJS = smartconfig.o
+OBJS = smartconfig.o cpack.o
 
 smartconfig: $(OBJS)
 	$(CC) -o $@ $^ $(LDFLAGS)
@@ -26,4 +26,4 @@ smartconfig: $(OBJS)
 
 
 clean:
-	$(Q) $(RM) smartconfig $(OBJS) $(OBJS).d tags
+	$(Q) $(RM) smartconfig $(OBJS) *.o.d tags

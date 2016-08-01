@@ -1,3 +1,6 @@
+#ifndef _SMARTCONFIG_H_
+#define _SMARTCONFIG_H_
+
 #include <stdio.h>
 #include <pcap.h>
 #include <signal.h>
@@ -95,3 +98,4 @@ struct ieee80211_radiotap_header {
 								 * by setting bit 31.
 								 */
 };
+#endif

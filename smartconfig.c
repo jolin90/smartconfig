@@ -36,13 +36,37 @@
 
 #include "smartconfig.h"
 #include "extract.h"
+#include "cpack.h"
 
-static u_char *program_name;
-static u_int packets_captured;
+enum ieee80211_radiotap_type {
+	IEEE80211_RADIOTAP_TSFT = 0,
+	IEEE80211_RADIOTAP_FLAGS = 1,
+	IEEE80211_RADIOTAP_RATE = 2,
+	IEEE80211_RADIOTAP_CHANNEL = 3,
+	IEEE80211_RADIOTAP_FHSS = 4,
+	IEEE80211_RADIOTAP_DBM_ANTSIGNAL = 5,
+	IEEE80211_RADIOTAP_DBM_ANTNOISE = 6,
+	IEEE80211_RADIOTAP_LOCK_QUALITY = 7,
+	IEEE80211_RADIOTAP_TX_ATTENUATION = 8,
+	IEEE80211_RADIOTAP_DB_TX_ATTENUATION = 9,
+	IEEE80211_RADIOTAP_DBM_TX_POWER = 10,
+	IEEE80211_RADIOTAP_ANTENNA = 11,
+	IEEE80211_RADIOTAP_DB_ANTSIGNAL = 12,
+	IEEE80211_RADIOTAP_DB_ANTNOISE = 13,
+	IEEE80211_RADIOTAP_RX_FLAGS = 14,
+	IEEE80211_RADIOTAP_XCHANNEL = 18,
+	IEEE80211_RADIOTAP_MCS = 19,
+	IEEE80211_RADIOTAP_AMPDU_STATUS = 20,
+	IEEE80211_RADIOTAP_VHT = 21,
+	IEEE80211_RADIOTAP_NAMESPACE = 29,
+	IEEE80211_RADIOTAP_VENDOR_NAMESPACE = 30,
+	IEEE80211_RADIOTAP_EXT = 31
+};
+
+static char *program_name;
 struct smartconfig SC;
 static u_int get_source_mac = 0;
-static u_int change_channel = 0;
-static u_char from_source_mac[3][6] = { 0 };
+static u_char from_source_mac[3][6] = { {0}, {0}, {0} };
 
 static struct ieee80211_channel channels[] = {
 	CHAN2G(1, 2412),
@@ -120,8 +144,6 @@ static int iface_set_freq(int sockfd, const char *device, int freq)
 
 static int iface_set_mode(int sockfd, const char *device, int mode)
 {
-	int oldflags;
-	struct ifreq ifr;
 	struct iwreq ireq;
 	int sock_fd;
 
@@ -195,18 +217,10 @@ static void check_from_source_mac()
 		return;
 
 	if (!memcmp(source0, source1, 6) && !memcmp(source2, source1, 6)) {
-		change_channel = 1;
 		get_source_mac = 1;
-#if 0
-		printf("=================================\n");
-		data_frame_dump(source0, 6);
-		data_frame_dump(source1, 6);
-		data_frame_dump(source2, 6);
-		printf("=================================\n\n\n");
-#endif
 		timer_delete(sc->timerid);
 		usleep(100);
-		printf("get source mac address\n");
+		printf("get source mac address, and channelfreq:%d\n", sc->channelfreq);
 		iface_set_freq(sc->sock_fd, sc->device, sc->channelfreq);
 	}
 }
@@ -214,9 +228,6 @@ static void check_from_source_mac()
 static void check_sconf_integrity(struct smartconfig *sc)
 {
 	int i, count = 0;
-
-	// printf("ssid_len:%d, psk_len:%d\n", sc->ssid_len, sc->psk_len);
-	// printf("channel:%d\n", sc->channelfreq);
 
 	int len = (sc->ssid_len > sc->psk_len ? sc->ssid_len : sc->psk_len);
 	if (len > 0) {
@@ -226,7 +237,6 @@ static void check_sconf_integrity(struct smartconfig *sc)
 				count++;
 
 		if (count == len) {
-			//printf("count:%d\n", count);
 			pcap_breakloop(sc->pd);
 		}
 	}
@@ -240,8 +250,8 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 #define ADDR3  (p + 16)
 #define ADDR4  (p + 24)
 
-	register const char *mcast = NULL;
-	register const char *source = NULL;
+	const u_char *mcast = NULL;
+	const u_char *source = NULL;
 
 	u_char *source0 = (u_char *) & from_source_mac[0];
 	u_char *source1 = (u_char *) & from_source_mac[1];
@@ -254,6 +264,7 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 		mcast = ADDR3;
 		source = ADDR2;
 	}
+
 	//data_frame_dump(mcast, 6);
 	//data_frame_dump(source, 6);
 
@@ -277,19 +288,19 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 
 		if (!memcmp(mcast_key0, mcast, 6)) {
 			sc->channelfreq = channel;
-			printf("channel:%d\n", sc->channelfreq);
+			//printf("channel:%d\n", sc->channelfreq);
 			memcpy(source0, source, 6);
 		}
 
 		if (!memcmp(mcast_key1, mcast, 6)) {
 			sc->channelfreq = channel;
-			printf("channel:%d\n", sc->channelfreq);
+			//printf("channel:%d\n", sc->channelfreq);
 			memcpy(source1, source, 6);
 		}
 
 		if (!memcmp(mcast_key2, mcast, 6)) {
 			sc->channelfreq = channel;
-			printf("channel:%d\n", sc->channelfreq);
+			//printf("channel:%d\n", sc->channelfreq);
 			memcpy(source2, source, 6);
 		}
 
@@ -302,39 +313,365 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 #undef ADDR4
 }
 
-static u_int ieee802_11_print(struct smartconfig *sc,
-							  const u_char * p, u_int length, u_int orig_caplen,
-							  uint16_t channel)
+static u_int ieee802_11_print(struct smartconfig *sc, const u_char * p,
+							  u_int length, u_int orig_caplen, uint16_t channel)
 {
 	uint16_t fc;
 
 	fc = EXTRACT_LE_16BITS(p);
 
 	if (FC_TYPE(fc) == T_DATA) {
-		// printf("%d\n", ++packets_captured);
 		data_header_print(sc, fc, p, channel);
 	}
 
 	return 0;
 }
 
-static u_int ieee802_11_radio_print(struct smartconfig *sc,
-									const u_char * p, u_int length,
-									u_int caplen)
+static int print_radiotap_field(struct smartconfig *sc, struct cpack_state *s,
+								uint32_t bit, uint8_t * flagsp,
+								uint32_t presentflags, uint16_t * channel)
 {
-	uint16_t channel;
+	int rc;
+
+	switch (bit) {
+
+	case IEEE80211_RADIOTAP_TSFT:{
+			uint64_t tsft;
+
+			rc = cpack_uint64(s, &tsft);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_FLAGS:{
+			uint8_t flagsval;
+
+			rc = cpack_uint8(s, &flagsval);
+			if (rc != 0)
+				goto trunc;
+			*flagsp = flagsval;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_RATE:{
+			uint8_t rate;
+
+			rc = cpack_uint8(s, &rate);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_CHANNEL:{
+			uint16_t frequency;
+			uint16_t flags;
+
+			rc = cpack_uint16(s, &frequency);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint16(s, &flags);
+			if (rc != 0)
+				goto trunc;
+			*channel = frequency;
+			break;
+		}
+
+#if 0
+	case IEEE80211_RADIOTAP_FHSS:{
+			uint8_t hopset;
+			uint8_t hoppat;
+
+			rc = cpack_uint8(s, &hopset);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint8(s, &hoppat);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_DBM_ANTSIGNAL:{
+			int8_t dbm_antsignal;
+
+			rc = cpack_int8(s, &dbm_antsignal);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_DBM_ANTNOISE:{
+			int8_t dbm_antnoise;
+
+			rc = cpack_int8(s, &dbm_antnoise);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_LOCK_QUALITY:{
+			uint16_t lock_quality;
+
+			rc = cpack_uint16(s, &lock_quality);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_TX_ATTENUATION:{
+			uint16_t tx_attenuation;
+
+			rc = cpack_uint16(s, &tx_attenuation);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_DB_TX_ATTENUATION:{
+			uint8_t db_tx_attenuation;
+
+			rc = cpack_uint8(s, &db_tx_attenuation);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_DBM_TX_POWER:{
+			int8_t dbm_tx_power;
+
+			rc = cpack_int8(s, &dbm_tx_power);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_ANTENNA:{
+			uint8_t antenna;
+
+			rc = cpack_uint8(s, &antenna);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_DB_ANTSIGNAL:{
+			uint8_t db_antsignal;
+
+			rc = cpack_uint8(s, &db_antsignal);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_DB_ANTNOISE:{
+			uint8_t db_antnoise;
+
+			rc = cpack_uint8(s, &db_antnoise);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_RX_FLAGS:{
+			uint16_t rx_flags;
+
+			rc = cpack_uint16(s, &rx_flags);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_XCHANNEL:{
+			uint32_t flags;
+			uint16_t frequency;
+			uint8_t channel;
+			uint8_t maxpower;
+
+			rc = cpack_uint32(s, &flags);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint16(s, &frequency);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint8(s, &channel);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint8(s, &maxpower);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_MCS:{
+			uint8_t known;
+			uint8_t flags;
+			uint8_t mcs_index;
+			float htrate;
+
+			rc = cpack_uint8(s, &known);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint8(s, &flags);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint8(s, &mcs_index);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_AMPDU_STATUS:{
+			uint32_t reference_num;
+			uint16_t flags;
+			uint8_t delim_crc;
+			uint8_t reserved;
+
+			rc = cpack_uint32(s, &reference_num);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint16(s, &flags);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint8(s, &delim_crc);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint8(s, &reserved);
+			if (rc != 0)
+				goto trunc;
+			break;
+		}
+
+	case IEEE80211_RADIOTAP_VHT:{
+			uint16_t known;
+			uint8_t flags;
+			uint8_t bandwidth;
+			uint8_t mcs_nss[4];
+			uint8_t coding;
+			uint8_t group_id;
+			uint16_t partial_aid;
+
+			rc = cpack_uint16(s, &known);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint8(s, &flags);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint8(s, &bandwidth);
+			if (rc != 0)
+				goto trunc;
+			for (i = 0; i < 4; i++) {
+				rc = cpack_uint8(s, &mcs_nss[i]);
+				if (rc != 0)
+					goto trunc;
+			}
+			rc = cpack_uint8(s, &coding);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint8(s, &group_id);
+			if (rc != 0)
+				goto trunc;
+			rc = cpack_uint16(s, &partial_aid);
+			if (rc != 0)
+				goto trunc;
+		}
+#endif
+
+	default:
+		return -1;
+	}
+
+	return 0;
+
+trunc:
+	return rc;
+}
+
+static int print_in_radiotap_namespace(struct smartconfig *sc,
+									   struct cpack_state *s,
+									   uint8_t * flags,
+									   uint32_t presentflags,
+									   int bit0, uint16_t * channel)
+{
+#define	BITNO_32(x) (((x) >> 16) ? 16 + BITNO_16((x) >> 16) : BITNO_16((x)))
+#define	BITNO_16(x) (((x) >> 8) ? 8 + BITNO_8((x) >> 8) : BITNO_8((x)))
+#define	BITNO_8(x) (((x) >> 4) ? 4 + BITNO_4((x) >> 4) : BITNO_4((x)))
+#define	BITNO_4(x) (((x) >> 2) ? 2 + BITNO_2((x) >> 2) : BITNO_2((x)))
+#define	BITNO_2(x) (((x) & 2) ? 1 : 0)
+
+	uint32_t present, next_present;
+	int bitno;
+	enum ieee80211_radiotap_type bit;
+	int rc;
+
+	for (present = presentflags; present; present = next_present) {
+		/*
+		 * Clear the least significant bit that is set.
+		 */
+		next_present = present & (present - 1);
+
+		/*
+		 * Get the bit number, within this presence word,
+		 * of the remaining least significant bit that
+		 * is set.
+		 */
+		bitno = BITNO_32(present ^ next_present);
+
+		/*
+		 * Stop if this is one of the "same meaning
+		 * in all presence flags" bits.
+		 */
+		if (bitno >= IEEE80211_RADIOTAP_NAMESPACE)
+			break;
+
+		/*
+		 * Get the radiotap bit number of that bit.
+		 */
+		bit = (enum ieee80211_radiotap_type)(bit0 + bitno);
+
+		rc = print_radiotap_field(sc, s, bit, flags, presentflags, channel);
+		if (rc != 0)
+			return rc;
+	}
+
+	return 0;
+}
+
+static u_int ieee802_11_radio_print(struct smartconfig *sc,
+									const u_char * p,
+									u_int length, u_int caplen)
+{
+#define BIT(n)  (1U << n)
+#define IS_EXTENDED(__p)    \
+	(EXTRACT_LE_32BITS(__p) & BIT(IEEE80211_RADIOTAP_EXT)) != 0
+
+	struct cpack_state cpacker;
 	const struct ieee80211_radiotap_header *hdr;
+	uint32_t presentflags;
+	const uint32_t *presentp;
 	u_int len;
+	uint16_t channel = 0;
+	uint8_t flags;
 
 	if (caplen < sizeof(*hdr)) {
-		printf("%s %d caplen:%d\n", __func__, __LINE__, caplen);
 		return caplen;
 	}
 
 	hdr = (const struct ieee80211_radiotap_header *)p;
 	len = EXTRACT_LE_16BITS(&hdr->it_len);
-	//channel = EXTRACT_LE_16BITS(p + 18);
-	channel = EXTRACT_LE_16BITS(p + 10);
+
+	if (caplen < len) {
+		return caplen;
+	}
+
+	cpack_init(&cpacker, (const uint8_t *)hdr, len);	/* align against header start */
+	cpack_advance(&cpacker, sizeof(*hdr));	/* includes the 1st bitmap */
+
+	flags = 0;
+
+	presentp = &hdr->it_present;
+	presentflags = EXTRACT_LE_32BITS(presentp);
+	print_in_radiotap_namespace(sc, &cpacker, &flags,
+								presentflags, 0, &channel);
 
 	return len + ieee802_11_print(sc, p + len, length - len, caplen - len,
 								  channel);
@@ -343,7 +680,6 @@ static u_int ieee802_11_radio_print(struct smartconfig *sc,
 u_int ieee802_11_radio_if_print(struct smartconfig * sc,
 								const struct pcap_pkthdr * h, const u_char * p)
 {
-	// printf("%s %d\n", __func__, __LINE__);
 	return ieee802_11_radio_print(sc, p, h->len, h->caplen);
 }
 
@@ -392,10 +728,10 @@ void cleanup(int signo)
 
 int main(int argc, char *argv[])
 {
-
+	int dlt = -1;
 	int sock_fd;
 	int status;
-	register char *cp, *infile, *cmdbuf, *device;
+	register char *cp, *device;
 	pcap_t *pd;
 	char ebuf[PCAP_ERRBUF_SIZE];
 	struct smartconfig *sc = &SC;
@@ -422,9 +758,16 @@ int main(int argc, char *argv[])
 	signal(SIGSEGV, cleanup);
 	signal(SIGKILL, cleanup);
 
+	evp.sigev_notify = SIGEV_THREAD;
+	evp.sigev_notify_function = timer_thread;
+	if (timer_create(CLOCK_REALTIME, &evp, &timerid) == -1) {
+		perror("fail to timer_create");
+		exit(-1);
+	}
+	sc->timerid = timerid;
+
 	if (iface_set_mode(0, sc->device, IW_MODE_MONITOR) < 0)
 		error("Can't set mode");
-	sleep(1);
 
 	pd = pcap_create(device, ebuf);
 	if (pd == NULL)
@@ -449,13 +792,6 @@ int main(int argc, char *argv[])
 	if (status != 0)
 		error("%s: pcap_set_timeout failed: %s",
 			  device, pcap_statustostr(status));
-
-#if 0
-	status = pcap_set_buffer_size(pd, 4 * 1024);
-	if (status != 0)
-		error("%s: Can't set buffer size: %s",
-			  device, pcap_statustostr(status));
-#endif
 
 	status = pcap_activate(pd);
 	if (status < 0) {
@@ -484,20 +820,11 @@ int main(int argc, char *argv[])
 			warning("%s: %s", device, pcap_statustostr(status));
 	}
 
-	evp.sigev_notify = SIGEV_THREAD;
-	evp.sigev_notify_function = timer_thread;
-
-	if (timer_create(CLOCK_REALTIME, &evp, &timerid) == -1) {
-		perror("fail to timer_create");
-		exit(-1);
+	dlt = pcap_datalink(pd);
+	if (dlt != DLT_IEEE802_11_RADIO) {
+		error("%s is not 802.11 plus radio information header", device);
+		exit(0);
 	}
-	sc->timerid = timerid;
-
-	struct itimerspec it;
-	it.it_interval.tv_sec = 1;
-	it.it_interval.tv_nsec = 0;	// 1000 * 1000 * 900;
-	it.it_value.tv_sec = 1;
-	it.it_value.tv_nsec = 0;	// 1000 * 1000 * 900;
 
 	sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 	if (sock_fd == -1) {
@@ -506,6 +833,11 @@ int main(int argc, char *argv[])
 	}
 	sc->sock_fd = sock_fd;
 
+	struct itimerspec it;
+	it.it_interval.tv_sec = 0;
+	it.it_interval.tv_nsec = 1000 * 1000 * 300;
+	it.it_value.tv_sec = 0;
+	it.it_value.tv_nsec = 1000 * 1000 * 300;
 	if (timer_settime(timerid, 0, &it, NULL) == -1) {
 		perror("fail to timer_settime");
 		exit(-1);
