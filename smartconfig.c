@@ -380,7 +380,9 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 	} else if (FC_TO_DS(fc) && !FC_FROM_DS(fc)) {
 		mcast = ADDR3;
 		source = ADDR2;
-	}
+	} else
+		return;
+
 	//data_frame_dump(mcast, 6);
 	//data_frame_dump(source, 6);
 
@@ -840,6 +842,7 @@ void cleanup(int signo)
 
 	iface_set_mode(0, sc->device, sc->oldmode);
 	iface_set_flags(0, sc->device, sc->oldflags);
+
 	exit(0);
 }
 
