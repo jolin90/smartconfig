@@ -142,10 +142,112 @@ static int iface_set_freq(int sockfd, const char *device, int freq)
 	return ret;
 }
 
+static int iface_get_flags(int sockfd, const char *device)
+{
+	int sock_fd;
+	struct ifreq ifr;
+
+	if (sockfd <= 0) {
+		sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+		if (sock_fd == -1) {
+			fprintf(stderr, "socket: %s", pcap_strerror(errno));
+			return PCAP_ERROR;
+		}
+	} else {
+		sock_fd = sockfd;
+	}
+
+	memset(&ifr, 0, sizeof(ifr));
+	strlcpy(ifr.ifr_name, device, sizeof(ifr.ifr_name));
+	if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr) == -1) {
+		fprintf(stderr, "%s: Can't get flags: %s", device, strerror(errno));
+		return PCAP_ERROR;
+	}
+
+	if (sockfd <= 0) {
+		close(sock_fd);
+	}
+
+	return ifr.ifr_flags;
+}
+
+static int iface_set_flags(int sockfd, const char *device, int oldflags)
+{
+	int sock_fd;
+	struct ifreq ifr;
+
+	if (sockfd <= 0) {
+		sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+		if (sock_fd == -1) {
+			fprintf(stderr, "socket: %s", pcap_strerror(errno));
+			return PCAP_ERROR;
+		}
+	} else {
+		sock_fd = sockfd;
+	}
+
+	memset(&ifr, 0, sizeof(ifr));
+	strlcpy(ifr.ifr_name, device, sizeof(ifr.ifr_name));
+	if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr) == -1) {
+		fprintf(stderr, "%s: Can't get flags: %s", device, strerror(errno));
+		return PCAP_ERROR;
+	}
+
+	if (oldflags & IFF_UP) {
+		ifr.ifr_flags |= IFF_UP;
+		if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) == -1) {
+			fprintf(stderr, "%s: Can't set flags: %s", device, strerror(errno));
+			return PCAP_ERROR;
+		}
+	} else {
+		ifr.ifr_flags &= ~IFF_UP;
+		if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) == -1) {
+			fprintf(stderr, "%s: Can't set flags: %s", device, strerror(errno));
+			return PCAP_ERROR;
+		}
+	}
+
+	if (sockfd <= 0) {
+		close(sock_fd);
+	}
+
+	return 1;
+}
+
+static int iface_get_mode(int sockfd, const char *device)
+{
+	int sock_fd;
+	struct iwreq ireq;
+
+	if (sockfd <= 0) {
+		sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+		if (sock_fd == -1) {
+			fprintf(stderr, "socket: %s", pcap_strerror(errno));
+			return PCAP_ERROR;
+		}
+	} else {
+		sock_fd = sockfd;
+	}
+
+	strlcpy(ireq.ifr_ifrn.ifrn_name, device, sizeof ireq.ifr_ifrn.ifrn_name);
+
+	if (ioctl(sock_fd, SIOCGIWMODE, &ireq) == -1) {
+		fprintf(stderr, "SIOCGIWMODE: %s", strerror(errno));
+		return PCAP_ERROR;
+	}
+
+	if (sockfd <= 0) {
+		close(sock_fd);
+	}
+
+	return ireq.u.mode;
+}
+
 static int iface_set_mode(int sockfd, const char *device, int mode)
 {
 	struct iwreq ireq;
 	int sock_fd;
+	struct ifreq ifr;
 
 	if (!sockfd) {
 		sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
@@ -157,11 +259,25 @@ static int iface_set_mode(int sockfd, const char *device, int mode)
 		sock_fd = sockfd;
 	}
 
+	memset(&ifr, 0, sizeof(ifr));
+	strlcpy(ifr.ifr_name, device, sizeof(ifr.ifr_name));
+	if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr) == -1) {
+		fprintf(stderr, "%s: Can't get flags: %s", device, strerror(errno));
+		return PCAP_ERROR;
+	}
+
+	if (ifr.ifr_flags & IFF_UP) {
+		ifr.ifr_flags &= ~IFF_UP;
+		if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) == -1) {
+			fprintf(stderr, "%s: Can't set flags: %s", device, strerror(errno));
+			return PCAP_ERROR;
+		}
+	}
+
 	strlcpy(ireq.ifr_ifrn.ifrn_name, device, sizeof ireq.ifr_ifrn.ifrn_name);
-	//ireq.u.mode = IW_MODE_MONITOR;
 	ireq.u.mode = mode;
 	if (ioctl(sock_fd, SIOCSIWMODE, &ireq) == -1) {
-		printf("%s %d\n", __func__, __LINE__);
+		fprintf(stderr, "SIOCSIWMODE: %s", strerror(errno));
 		return PCAP_ERROR;
 	}
 
@@ -220,7 +336,8 @@ static void check_from_source_mac()
 		get_source_mac = 1;
 		timer_delete(sc->timerid);
 		usleep(100);
-		printf("get source mac address, and channelfreq:%d\n", sc->channelfreq);
+		printf("get source mac address, and channelfreq: %d\n",
+			   sc->channelfreq);
 		iface_set_freq(sc->sock_fd, sc->device, sc->channelfreq);
 	}
 }
@@ -264,7 +381,6 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 		mcast = ADDR3;
 		source = ADDR2;
 	}
-
 	//data_frame_dump(mcast, 6);
 	//data_frame_dump(source, 6);
 
@@ -288,19 +404,19 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 
 		if (!memcmp(mcast_key0, mcast, 6)) {
 			sc->channelfreq = channel;
-			//printf("channel:%d\n", sc->channelfreq);
+			printf("channel0:%d\n", sc->channelfreq);
 			memcpy(source0, source, 6);
 		}
 
 		if (!memcmp(mcast_key1, mcast, 6)) {
 			sc->channelfreq = channel;
-			//printf("channel:%d\n", sc->channelfreq);
+			printf("channel1:%d\n", sc->channelfreq);
 			memcpy(source1, source, 6);
 		}
 
 		if (!memcmp(mcast_key2, mcast, 6)) {
 			sc->channelfreq = channel;
-			//printf("channel:%d\n", sc->channelfreq);
+			printf("channel2:%d\n", sc->channelfreq);
 			memcpy(source2, source, 6);
 		}
 
@@ -722,14 +838,15 @@ void cleanup(int signo)
 		close(sc->sock_fd);
 	}
 
-	iface_set_mode(0, sc->device, IW_MODE_INFRA);
+	iface_set_mode(0, sc->device, sc->oldmode);
+	iface_set_flags(0, sc->device, sc->oldflags);
 	exit(0);
 }
 
 int main(int argc, char *argv[])
 {
 	int dlt = -1;
-	int sock_fd;
+	int sock_fd, oldmode, oldflags;
 	int status;
 	register char *cp, *device;
 	pcap_t *pd;
@@ -766,8 +883,27 @@ int main(int argc, char *argv[])
 	}
 	sc->timerid = timerid;
 
-	if (iface_set_mode(0, sc->device, IW_MODE_MONITOR) < 0)
+	if ((oldflags = iface_get_flags(0, device)) < 0) {
+		error("Can't get flags");
+		exit(-1);
+	}
+	sc->oldflags = oldflags;
+
+	if ((oldmode = iface_get_mode(0, device)) < 0) {
+		error("Can't get mode");
+		exit(-1);
+	}
+	sc->oldmode = oldmode;
+
+	if (iface_set_mode(0, sc->device, IW_MODE_MONITOR) < 0) {
 		error("Can't set mode");
+		exit(-1);
+	}
+
+	if (iface_set_flags(0, sc->device, IFF_UP) < 0) {
+		error("Can't set flags");
+		exit(-1);
+	}
 
 	pd = pcap_create(device, ebuf);
 	if (pd == NULL)

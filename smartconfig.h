@@ -76,6 +76,8 @@ struct smartconfig {
 	const char *device;
 	timer_t timerid;
 	u_int change_channel;
+	int oldmode;
+	int oldflags;
 };
 
 struct ieee80211_radiotap_header {
