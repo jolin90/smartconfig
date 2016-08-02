@@ -68,6 +68,8 @@ struct smartconfig SC;
 static u_int get_source_mac = 0;
 static u_char from_source_mac[3][6] = { {0}, {0}, {0} };
 
+static pthread_mutex_t mutex;
+
 static const u_char mcast_key0[] = { 0x01, 0x00, 0x5e, 0x00, 0x48, 0x35 };
 static const u_char mcast_key1[] = { 0x01, 0x00, 0x5e, 0x01, 0x68, 0x2b };
 static const u_char mcast_key2[] = { 0x01, 0x00, 0x5e, 0x02, 0x5c, 0x31 };
@@ -309,35 +311,37 @@ void data_frame_dump(const u_char * pbuf, int buf_len)
 	printf("\n");
 }
 
-
 static void check_from_source_mac(struct smartconfig *sc)
 {
 	u_char *source0 = (u_char *) & from_source_mac[0];
 	u_char *source1 = (u_char *) & from_source_mac[1];
 	u_char *source2 = (u_char *) & from_source_mac[2];
 
-	if ((source0[0] == 0) && (source0[1] == 0) &&
-		(source0[2] == 0) && (source0[3] == 0) &&
-		(source0[4] == 0) && (source0[5] == 0))
-		return;
+	if (!get_source_mac) {
 
-	if ((source1[0] == 0) && (source1[1] == 0) &&
-		(source1[2] == 0) && (source1[3] == 0) &&
-		(source1[4] == 0) && (source1[5] == 0))
-		return;
+		if ((source0[0] == 0) && (source0[1] == 0) &&
+			(source0[2] == 0) && (source0[3] == 0) &&
+			(source0[4] == 0) && (source0[5] == 0))
+			return;
 
-	if ((source2[0] == 0) && (source2[1] == 0) &&
-		(source2[2] == 0) && (source2[3] == 0) &&
-		(source2[4] == 0) && (source2[5] == 0))
-		return;
+		if ((source1[0] == 0) && (source1[1] == 0) &&
+			(source1[2] == 0) && (source1[3] == 0) &&
+			(source1[4] == 0) && (source1[5] == 0))
+			return;
 
-	if (!memcmp(source0, source1, 6) && !memcmp(source2, source1, 6)) {
-		get_source_mac = 1;
-		timer_delete(sc->timerid);
-		usleep(100);
-		printf("get source mac address, and channelfreq: %d\n",
-			   sc->channelfreq);
-		iface_set_freq(sc->sock_fd, sc->device, sc->channelfreq);
+		if ((source2[0] == 0) && (source2[1] == 0) &&
+			(source2[2] == 0) && (source2[3] == 0) &&
+			(source2[4] == 0) && (source2[5] == 0))
+			return;
+
+		if (!memcmp(source0, source1, 6) && !memcmp(source2, source1, 6)) {
+			get_source_mac = 1;
+			timer_delete(sc->timerid);
+			usleep(100);
+			printf("get source mac address, and channelfreq: %d\n",
+				   sc->channelfreq);
+			iface_set_freq(sc->sock_fd, sc->device, sc->channelfreq);
+		}
 	}
 }
 
@@ -389,6 +393,8 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 	//data_frame_dump(mcast, 6);
 	//data_frame_dump(source, 6);
 
+	pthread_mutex_lock(&mutex);
+
 	if (get_source_mac) {
 		if (!memcmp(source0, source, 6)) {
 
@@ -427,6 +433,8 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 
 		check_from_source_mac(sc);
 	}
+
+	pthread_mutex_unlock(&mutex);
 
 #undef ADDR1
 #undef ADDR2
@@ -862,6 +870,8 @@ int main(int argc, char *argv[])
 	struct smartconfig *sc = &SC;
 	timer_t timerid;
 	struct sigevent evp;
+
+	pthread_mutex_init(&mutex, NULL);
 
 	memset(&evp, 0, sizeof(struct sigevent));
 	memset(sc, 0, sizeof(struct smartconfig));
