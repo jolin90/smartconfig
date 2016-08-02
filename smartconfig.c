@@ -68,6 +68,11 @@ struct smartconfig SC;
 static u_int get_source_mac = 0;
 static u_char from_source_mac[3][6] = { {0}, {0}, {0} };
 
+static const u_char mcast_key0[] = { 0x01, 0x00, 0x5e, 0x00, 0x48, 0x35 };
+static const u_char mcast_key1[] = { 0x01, 0x00, 0x5e, 0x01, 0x68, 0x2b };
+static const u_char mcast_key2[] = { 0x01, 0x00, 0x5e, 0x02, 0x5c, 0x31 };
+static const u_char mcast_key3[] = { 0x01, 0x00, 0x5e, 0x03, 0x00, 0x00 };
+
 static struct ieee80211_channel channels[] = {
 	CHAN2G(1, 2412),
 	CHAN2G(2, 2417),
@@ -249,7 +254,7 @@ static int iface_set_mode(int sockfd, const char *device, int mode)
 	int sock_fd;
 	struct ifreq ifr;
 
-	if (!sockfd) {
+	if (sockfd <= 0) {
 		sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 		if (sock_fd == -1) {
 			fprintf(stderr, "socket: %s", pcap_strerror(errno));
@@ -281,7 +286,7 @@ static int iface_set_mode(int sockfd, const char *device, int mode)
 		return PCAP_ERROR;
 	}
 
-	if (!sockfd) {
+	if (sockfd <= 0) {
 		close(sock_fd);
 	}
 
@@ -304,15 +309,9 @@ void data_frame_dump(const u_char * pbuf, int buf_len)
 	printf("\n");
 }
 
-static const u_char mcast_key0[] = { 0x01, 0x00, 0x5e, 0x00, 0x48, 0x35 };
-static const u_char mcast_key1[] = { 0x01, 0x00, 0x5e, 0x01, 0x68, 0x2b };
-static const u_char mcast_key2[] = { 0x01, 0x00, 0x5e, 0x02, 0x5c, 0x31 };
-static const u_char mcast_key3[] = { 0x01, 0x00, 0x5e, 0x03, 0x00, 0x00 };
 
-static void check_from_source_mac()
+static void check_from_source_mac(struct smartconfig *sc)
 {
-	struct smartconfig *sc = &SC;
-
 	u_char *source0 = (u_char *) & from_source_mac[0];
 	u_char *source1 = (u_char *) & from_source_mac[1];
 	u_char *source2 = (u_char *) & from_source_mac[2];
@@ -354,7 +353,11 @@ static void check_sconf_integrity(struct smartconfig *sc)
 				count++;
 
 		if (count == len) {
-			pcap_breakloop(sc->pd);
+			if (sc->pd) {
+				pcap_breakloop(sc->pd);
+			}
+
+			kill(getpid(), SIGUSR2);
 		}
 	}
 }
@@ -821,11 +824,13 @@ void cleanup(int signo)
 	int i;
 	struct smartconfig *sc = &SC;
 
+	printf("signo:%d\n", signo);
+
 	for (i = 0; i < sc->ssid_len; i++)
-		memcpy(&sc->ssid[i], &sc->slm[i + 4].mcast[4], 1);
+		sc->ssid[i] = sc->slm[i + 4].mcast[4];
 
 	for (i = 0; i < sc->psk_len; i++)
-		memcpy(&sc->psk[i], &sc->slm[i + 4].mcast[5], 1);
+		sc->psk[i] = sc->slm[i + 4].mcast[5];
 
 	printf("ssid:%s, psk:%s\n", sc->ssid, sc->psk);
 	printf("channel:%d\n", sc->channelfreq);
@@ -875,13 +880,13 @@ int main(int argc, char *argv[])
 	signal(SIGINT, cleanup);
 	signal(SIGCHLD, cleanup);
 	signal(SIGHUP, cleanup);
-	signal(SIGSEGV, cleanup);
+	signal(SIGUSR2, cleanup);
 	signal(SIGKILL, cleanup);
 
 	evp.sigev_notify = SIGEV_THREAD;
 	evp.sigev_notify_function = timer_thread;
 	if (timer_create(CLOCK_REALTIME, &evp, &timerid) == -1) {
-		perror("fail to timer_create");
+		error("fail to timer_create");
 		exit(-1);
 	}
 	sc->timerid = timerid;
@@ -984,7 +989,7 @@ int main(int argc, char *argv[])
 
 	do {
 		status = pcap_loop(pd, -1, print_packet, (u_char *) sc);
-	} while (1);
+	} while (0);
 
 	return 0;
 }
