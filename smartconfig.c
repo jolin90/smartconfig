@@ -266,18 +266,21 @@ static int iface_set_mode(int sockfd, const char *device, int mode)
 		sock_fd = sockfd;
 	}
 
-	memset(&ifr, 0, sizeof(ifr));
-	strlcpy(ifr.ifr_name, device, sizeof(ifr.ifr_name));
-	if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr) == -1) {
-		fprintf(stderr, "%s: Can't get flags: %s", device, strerror(errno));
-		return PCAP_ERROR;
-	}
-
-	if (ifr.ifr_flags & IFF_UP) {
-		ifr.ifr_flags &= ~IFF_UP;
-		if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) == -1) {
-			fprintf(stderr, "%s: Can't set flags: %s", device, strerror(errno));
+	if (sockfd <= 0) {
+		memset(&ifr, 0, sizeof(ifr));
+		strlcpy(ifr.ifr_name, device, sizeof(ifr.ifr_name));
+		if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr) == -1) {
+			fprintf(stderr, "%s: Can't get flags: %s", device, strerror(errno));
 			return PCAP_ERROR;
+		}
+
+		if (ifr.ifr_flags & IFF_UP) {
+			ifr.ifr_flags &= ~IFF_UP;
+			if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) == -1) {
+				fprintf(stderr, "%s: Can't set flags: %s", device,
+						strerror(errno));
+				return PCAP_ERROR;
+			}
 		}
 	}
 
@@ -815,6 +818,8 @@ u_int ieee802_11_radio_if_print(struct smartconfig * sc,
 static void print_packet(u_char * user, const struct pcap_pkthdr *h,
 						 const u_char * sp)
 {
+	static u_int packets_captured = 0;
+	printf("packets_captured = %u\n", packets_captured++);
 	ieee802_11_radio_if_print((struct smartconfig *)user, h, sp);
 }
 
@@ -824,7 +829,10 @@ void timer_thread(union sigval v)
 	struct smartconfig *sc = &SC;
 
 	iface_set_freq(sc->sock_fd, sc->device, channels[index].center_freq);
-	index = ((++index) % 14);
+	if (index == 13)
+		iface_set_mode(sc->sock_fd, sc->device, IW_MODE_MONITOR);
+	index++;
+	index = ((index) % 14);
 }
 
 void cleanup(int signo)
@@ -885,13 +893,8 @@ int main(int argc, char *argv[])
 
 	sc->device = device;
 
-	signal(SIGPIPE, cleanup);
-	signal(SIGTERM, cleanup);
 	signal(SIGINT, cleanup);
-	signal(SIGCHLD, cleanup);
-	signal(SIGHUP, cleanup);
 	signal(SIGUSR2, cleanup);
-	signal(SIGKILL, cleanup);
 
 	evp.sigev_notify = SIGEV_THREAD;
 	evp.sigev_notify_function = timer_thread;
