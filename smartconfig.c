@@ -360,10 +360,6 @@ static void check_sconf_integrity(struct smartconfig *sc)
 				count++;
 
 		if (count == len) {
-			if (sc->pd) {
-				pcap_breakloop(sc->pd);
-			}
-
 			kill(getpid(), SIGUSR2);
 		}
 	}
@@ -829,46 +825,27 @@ void timer_thread(union sigval v)
 	struct smartconfig *sc = &SC;
 
 	iface_set_freq(sc->sock_fd, sc->device, channels[index].center_freq);
-	if (index == 13)
+	if (index == 13) {
 		iface_set_mode(sc->sock_fd, sc->device, IW_MODE_MONITOR);
+	}
+
 	index++;
 	index = ((index) % 14);
 }
 
 void cleanup(int signo)
 {
-	int i;
 	struct smartconfig *sc = &SC;
 
 	printf("signo:%d\n", signo);
 
-	for (i = 0; i < sc->ssid_len; i++)
-		sc->ssid[i] = sc->slm[i + 4].mcast[4];
-
-	for (i = 0; i < sc->psk_len; i++)
-		sc->psk[i] = sc->slm[i + 4].mcast[5];
-
-	printf("ssid:%s, psk:%s\n", sc->ssid, sc->psk);
-	printf("channel:%d\n", sc->channelfreq);
-
-	if (sc->pd) {
-		pcap_close(sc->pd);
-		sc->pd = NULL;
-	}
-
-	if (sc->sock_fd) {
-		printf("close sock_fd:%d\n", sc->sock_fd);
-		close(sc->sock_fd);
-	}
-
-	iface_set_mode(0, sc->device, sc->oldmode);
-	iface_set_flags(0, sc->device, sc->oldflags);
-
-	exit(0);
+	if (signo == SIGUSR2)
+		pcap_breakloop(sc->pd);
 }
 
 int main(int argc, char *argv[])
 {
+	int i;
 	int dlt = -1;
 	int sock_fd, oldmode, oldflags;
 	int status;
@@ -893,8 +870,9 @@ int main(int argc, char *argv[])
 
 	sc->device = device;
 
-	signal(SIGINT, cleanup);
+	//signal(SIGINT, cleanup);
 	signal(SIGUSR2, cleanup);
+	//signal(SIGSEGV, cleanup);
 
 	evp.sigev_notify = SIGEV_THREAD;
 	evp.sigev_notify_function = timer_thread;
@@ -927,8 +905,11 @@ int main(int argc, char *argv[])
 	}
 
 	pd = pcap_create(device, ebuf);
-	if (pd == NULL)
+	if (pd == NULL) {
 		error("%s", ebuf);
+		exit(-1);
+	}
+	sc->pd = pd;
 
 	status = pcap_set_immediate_mode(pd, 1);
 	if (status != 0)
@@ -1003,6 +984,32 @@ int main(int argc, char *argv[])
 	do {
 		status = pcap_loop(pd, -1, print_packet, (u_char *) sc);
 	} while (0);
+
+	if (pd) {
+		printf("close pcap\n");
+		pcap_close(pd);
+		pd = NULL;
+	}
+
+	for (i = 0; i < sc->ssid_len; i++)
+		sc->ssid[i] = sc->slm[i + 4].mcast[4];
+
+	for (i = 0; i < sc->psk_len; i++)
+		sc->psk[i] = sc->slm[i + 4].mcast[5];
+
+	printf("ssid:%s, psk:%s\n", sc->ssid, sc->psk);
+	printf("channel:%d\n", sc->channelfreq);
+
+	iface_set_mode(sock_fd, sc->device, sc->oldmode);
+	iface_set_flags(sock_fd, sc->device, sc->oldflags);
+
+	if (sock_fd) {
+		printf("close sock_fd:%d\n", sock_fd);
+		close(sock_fd);
+		sock_fd = -1;
+	}
+
+	printf("done\n");
 
 	return 0;
 }
