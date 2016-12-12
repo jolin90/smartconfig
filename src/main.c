@@ -47,7 +47,7 @@ int main(int argc, char *argv[])
 
 	do {
 		printf("geting...\n");
-		sleep(1);
+		//sleep(1);
 
 		if (jolin_smartlink_getinfo(ssid, psk)) {
 			break;

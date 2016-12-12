@@ -37,6 +37,7 @@
 #include "smartconfig.h"
 #include "extract.h"
 #include "cpack.h"
+#include "crc32.h"
 
 enum ieee80211_radiotap_type {
 	IEEE80211_RADIOTAP_TSFT = 0,
@@ -382,6 +383,9 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 	if (get_source_mac) {
 		if (!memcmp(source0, source, 6)) {
 
+			if (mcast[3] > MAX_SLINKMAC_LEN)
+				return;
+
 			if (!memcmp(mcast_key3, mcast, 4)) {
 				if ((mcast[4] <= MAX_SSID_PSK_LEN)
 					&& (mcast[5] <= MAX_SSID_PSK_LEN)) {
@@ -436,8 +440,13 @@ static u_int ieee802_11_print(struct smartconfig *sc, const u_char * p,
 
 	fc = EXTRACT_LE_16BITS(p);
 
-	if (FC_TYPE(fc) == T_DATA) {
-		data_header_print(sc, fc, p, channel);
+	u32 fcs = *(u32 *) (p + length - 4);
+	u32 crc = getcrc32(p, length - 4);
+
+	if (fcs == crc) {
+		if (FC_TYPE(fc) == T_DATA) {
+			data_header_print(sc, fc, p, channel);
+		}
 	}
 
 	return 0;
