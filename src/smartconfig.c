@@ -63,9 +63,10 @@ enum ieee80211_radiotap_type {
 	IEEE80211_RADIOTAP_EXT = 31
 };
 
-static char *program_name;
-struct smartconfig SC;
+static struct smartconfig SC;
+static char *program_name = "jolin_smartconfig";
 static u_int get_source_mac = 0;
+static u_int get_smartconfig_ok = 0;
 static u_char from_source_mac[3][6] = { {0}, {0}, {0} };
 
 static pthread_mutex_t mutex;
@@ -93,7 +94,7 @@ static struct ieee80211_channel channels[] = {
 };
 
 /* VARARGS */
-void error(const char *fmt, ...)
+static void error(const char *fmt, ...)
 {
 	va_list ap;
 
@@ -111,7 +112,7 @@ void error(const char *fmt, ...)
 }
 
 /* VARARGS */
-void warning(const char *fmt, ...)
+static void warning(const char *fmt, ...)
 {
 	va_list ap;
 
@@ -296,22 +297,6 @@ static int iface_set_mode(int sockfd, const char *device, int mode)
 	}
 
 	return 1;
-}
-
-void data_frame_dump(const u_char * pbuf, int buf_len)
-{
-	int i;
-	int j = 1;
-
-	for (i = 0; i < buf_len; i++) {
-		printf("%02x-", *(pbuf + i));
-
-		if (j % 32 == 0)
-			printf("\n");
-		j++;
-	}
-
-	printf("\n");
 }
 
 static void check_from_source_mac(struct smartconfig *sc)
@@ -805,8 +790,9 @@ static u_int ieee802_11_radio_print(struct smartconfig *sc,
 								  channel);
 }
 
-u_int ieee802_11_radio_if_print(struct smartconfig * sc,
-								const struct pcap_pkthdr * h, const u_char * p)
+static u_int ieee802_11_radio_if_print(struct smartconfig *sc,
+									   const struct pcap_pkthdr *h,
+									   const u_char * p)
 {
 	return ieee802_11_radio_print(sc, p, h->len, h->caplen);
 }
@@ -814,12 +800,15 @@ u_int ieee802_11_radio_if_print(struct smartconfig * sc,
 static void print_packet(u_char * user, const struct pcap_pkthdr *h,
 						 const u_char * sp)
 {
+#if 0
 	static u_int packets_captured = 0;
 	printf("packets_captured = %u\n", packets_captured++);
+#endif
+
 	ieee802_11_radio_if_print((struct smartconfig *)user, h, sp);
 }
 
-void timer_thread(union sigval v)
+static void timer_thread(union sigval v)
 {
 	static int index = 0;
 	struct smartconfig *sc = &SC;
@@ -833,19 +822,21 @@ void timer_thread(union sigval v)
 	index = ((index) % 14);
 }
 
-void cleanup(int signo)
+static void cleanup(int signo)
 {
 	struct smartconfig *sc = &SC;
+	//pcap_t *pd = sc->pd;
+	//int sock_fd = sc->sock_fd;
 
 	printf("signo:%d\n", signo);
 
 	if (signo == SIGUSR2)
 		pcap_breakloop(sc->pd);
+
 }
 
-int main(int argc, char *argv[])
+static void *__jolin_smartlink_start(void *iface)
 {
-	int i;
 	int dlt = -1;
 	int sock_fd, oldmode, oldflags;
 	int status;
@@ -858,56 +849,53 @@ int main(int argc, char *argv[])
 
 	pthread_mutex_init(&mutex, NULL);
 
-	memset(&evp, 0, sizeof(struct sigevent));
 	memset(sc, 0, sizeof(struct smartconfig));
+	memset(&evp, 0, sizeof(struct sigevent));
 
-	program_name = argv[0];
-	device = argv[1];
+	device = (char *)iface;
 	if (!device) {
 		printf("please input a wireless iface\n");
-		exit(1);
+		goto error_iface;
 	}
 
 	sc->device = device;
 
-	//signal(SIGINT, cleanup);
 	signal(SIGUSR2, cleanup);
-	//signal(SIGSEGV, cleanup);
 
 	evp.sigev_notify = SIGEV_THREAD;
 	evp.sigev_notify_function = timer_thread;
 	if (timer_create(CLOCK_REALTIME, &evp, &timerid) == -1) {
 		error("fail to timer_create");
-		exit(-1);
+		goto error_iface;
 	}
 	sc->timerid = timerid;
 
 	if ((oldflags = iface_get_flags(0, device)) < 0) {
 		error("Can't get flags");
-		exit(-1);
+		goto error_iface;
 	}
 	sc->oldflags = oldflags;
 
 	if ((oldmode = iface_get_mode(0, device)) < 0) {
 		error("Can't get mode");
-		exit(-1);
+		goto error_iface;
 	}
 	sc->oldmode = oldmode;
 
 	if (iface_set_mode(0, sc->device, IW_MODE_MONITOR) < 0) {
 		error("Can't set mode");
-		exit(-1);
+		goto error_iface;
 	}
 
 	if (iface_set_flags(0, sc->device, IFF_UP) < 0) {
 		error("Can't set flags");
-		exit(-1);
+		goto error_iface;
 	}
 
 	pd = pcap_create(device, ebuf);
 	if (pd == NULL) {
 		error("%s", ebuf);
-		exit(-1);
+		goto error_pcap;
 	}
 	sc->pd = pd;
 
@@ -967,7 +955,7 @@ int main(int argc, char *argv[])
 	sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 	if (sock_fd == -1) {
 		fprintf(stderr, "socket: %s", pcap_strerror(errno));
-		return PCAP_ERROR;
+		goto error_socket;
 	}
 	sc->sock_fd = sock_fd;
 
@@ -978,27 +966,22 @@ int main(int argc, char *argv[])
 	it.it_value.tv_nsec = 1000 * 1000 * 300;
 	if (timer_settime(timerid, 0, &it, NULL) == -1) {
 		perror("fail to timer_settime");
-		exit(-1);
+		goto error_socket;
 	}
+
+	printf("pcap_loop start\n");
 
 	do {
 		status = pcap_loop(pd, -1, print_packet, (u_char *) sc);
 	} while (0);
+
+	printf("pcap_loop stop\n");
 
 	if (pd) {
 		printf("close pcap\n");
 		pcap_close(pd);
 		pd = NULL;
 	}
-
-	for (i = 0; i < sc->ssid_len; i++)
-		sc->ssid[i] = sc->slm[i + 4].mcast[4];
-
-	for (i = 0; i < sc->psk_len; i++)
-		sc->psk[i] = sc->slm[i + 4].mcast[5];
-
-	printf("ssid:%s, psk:%s\n", sc->ssid, sc->psk);
-	printf("channel:%d\n", sc->channelfreq);
 
 	iface_set_mode(sock_fd, sc->device, sc->oldmode);
 	iface_set_flags(sock_fd, sc->device, sc->oldflags);
@@ -1009,7 +992,55 @@ int main(int argc, char *argv[])
 		sock_fd = -1;
 	}
 
-	printf("done\n");
+	get_smartconfig_ok = 1;
+
+	return NULL;
+
+error_socket:
+	if (sock_fd)
+		close(sock_fd);
+	if (pd)
+		pcap_close(pd);
+error_pcap:
+	timer_delete(timerid);
+error_iface:
+
+	return NULL;
+}
+
+int jolin_smartlink_start(char *iface)
+{
+	printf("smartconfig start\n");
+
+	pthread_t smartconfig_t;
+	pthread_create(&smartconfig_t, NULL, __jolin_smartlink_start, iface);
+	pthread_detach(smartconfig_t);
+
+	return 0;
+}
+
+int jolin_smartlink_stop()
+{
+	get_source_mac = 0;
+	get_smartconfig_ok = 0;
+
+	printf("smartconfig stop\n");
+
+	return 0;
+}
+
+int jolin_smartlink_getinfo(char *ssid, char *psk)
+{
+	int i;
+	struct smartconfig *sc = &SC;
+
+	if (get_smartconfig_ok) {
+		for (i = 0; i < sc->ssid_len; i++)
+			ssid[i] = sc->ssid[i] = sc->slm[i + 4].mcast[4];
+		for (i = 0; i < sc->psk_len; i++)
+			psk[i] = sc->psk[i] = sc->slm[i + 4].mcast[5];
+		return 1;
+	}
 
 	return 0;
 }

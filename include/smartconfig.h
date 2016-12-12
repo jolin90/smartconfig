@@ -29,7 +29,7 @@
  *  * Bits in the frame control field.
  *   */
 #define FC_VERSION(fc)      ((fc) & 0x3)
-#define FC_TYPE(fc)     (((fc) >> 2) & 0x3)
+#define FC_TYPE(fc)         (((fc) >> 2) & 0x3)
 #define FC_SUBTYPE(fc)      (((fc) >> 4) & 0xF)
 #define FC_TO_DS(fc)        ((fc) & 0x0100)
 #define FC_FROM_DS(fc)      ((fc) & 0x0200)
@@ -100,4 +100,25 @@ struct ieee80211_radiotap_header {
 								 * by setting bit 31.
 								 */
 };
+
+int jolin_smartlink_getinfo(char *ssid, char *psk);
+int jolin_smartlink_stop();
+int jolin_smartlink_start(char *iface);
+
+static inline void data_frame_dump(const unsigned char *pbuf, int buf_len)
+{
+	int i;
+	int j = 1;
+
+	for (i = 0; i < buf_len; i++) {
+		printf("%02x-", *(pbuf + i));
+
+		if (j % 32 == 0)
+			printf("\n");
+		j++;
+	}
+
+	printf("\n");
+}
+
 #endif
