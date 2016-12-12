@@ -383,8 +383,11 @@ static void data_header_print(struct smartconfig *sc, uint16_t fc,
 		if (!memcmp(source0, source, 6)) {
 
 			if (!memcmp(mcast_key3, mcast, 4)) {
-				sc->ssid_len = mcast[4];
-				sc->psk_len = mcast[5];
+				if ((mcast[4] <= MAX_SSID_PSK_LEN)
+					&& (mcast[5] <= MAX_SSID_PSK_LEN)) {
+					sc->ssid_len = mcast[4];
+					sc->psk_len = mcast[5];
+				}
 			} else if (!memcmp(mcast_key3, mcast, 3)) {
 				int index = mcast[3];
 				memcpy(sc->slm[index].mcast, mcast, 6);

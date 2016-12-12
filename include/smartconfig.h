@@ -61,14 +61,15 @@ struct slink_mac {
 	u_char mcast[6];
 };
 
+#define MAX_SSID_PSK_LEN 60
+#define MAX_SLINKMAC_LEN (MAX_SSID_PSK_LEN+4)
 struct smartconfig {
 	pcap_t *pd;
 	u_int ssid_len;
 	u_int psk_len;
-	u_char ssid[16];
-	u_char psk[32];
-	u_char link_packet[36][6];
-	struct slink_mac slm[36];
+	u_char ssid[MAX_SSID_PSK_LEN];
+	u_char psk[MAX_SSID_PSK_LEN];
+	struct slink_mac slm[MAX_SLINKMAC_LEN];
 	u_char from_source_mac[3][6];
 	u_int get_source_mac;
 	uint16_t channelfreq;

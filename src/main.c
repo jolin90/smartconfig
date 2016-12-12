@@ -35,8 +35,8 @@
 
 int main(int argc, char *argv[])
 {
-	char ssid[16];
-	char psk[32];
+	char ssid[MAX_SSID_PSK_LEN];
+	char psk[MAX_SSID_PSK_LEN];
 
 	memset(ssid, 0, sizeof(ssid));
 	memset(psk, 0, sizeof(psk));

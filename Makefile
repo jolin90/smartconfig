@@ -1,6 +1,6 @@
 # sudo apt-get install libpcap-dev
 
-BUILD_DIR := build
+BUILD_DIR := out
 
 update:
 	@ make -C ${BUILD_DIR}
