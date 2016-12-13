@@ -326,6 +326,7 @@ static void check_from_source_mac(struct smartconfig *sc)
 		if (!memcmp(source0, source1, 6) && !memcmp(source2, source1, 6)) {
 			get_source_mac = 1;
 			timer_delete(sc->timerid);
+			sc->timerid = 0;
 			usleep(100);
 			printf("get source mac address, and channelfreq: %d\n",
 				   sc->channelfreq);
@@ -845,9 +846,10 @@ static void cleanup(int signo)
 	if (signo == SIGUSR2)
 		pcap_breakloop(sc->pd);
 
+	get_smartconfig_ok = 1;
 }
 
-static void *__jolin_smartlink_start(void *iface)
+static void *thread_smartlink_start(void *iface)
 {
 	int dlt = -1;
 	int sock_fd, oldmode, oldflags;
@@ -856,7 +858,7 @@ static void *__jolin_smartlink_start(void *iface)
 	pcap_t *pd;
 	char ebuf[PCAP_ERRBUF_SIZE];
 	struct smartconfig *sc = &SC;
-	timer_t timerid;
+	timer_t timerid = 0;
 	struct sigevent evp;
 
 	pthread_mutex_init(&mutex, NULL);
@@ -907,7 +909,7 @@ static void *__jolin_smartlink_start(void *iface)
 	pd = pcap_create(device, ebuf);
 	if (pd == NULL) {
 		error("%s", ebuf);
-		goto error_pcap;
+		goto error_timer;
 	}
 	sc->pd = pd;
 
@@ -967,7 +969,7 @@ static void *__jolin_smartlink_start(void *iface)
 	sock_fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 	if (sock_fd == -1) {
 		fprintf(stderr, "socket: %s", pcap_strerror(errno));
-		goto error_socket;
+		goto error_pcap;
 	}
 	sc->sock_fd = sock_fd;
 
@@ -995,26 +997,32 @@ static void *__jolin_smartlink_start(void *iface)
 		pd = NULL;
 	}
 
-	iface_set_mode(sock_fd, sc->device, sc->oldmode);
-	iface_set_flags(sock_fd, sc->device, sc->oldflags);
-
 	if (sock_fd) {
+		iface_set_mode(sock_fd, sc->device, sc->oldmode);
+		iface_set_flags(sock_fd, sc->device, sc->oldflags);
 		printf("close sock_fd:%d\n", sock_fd);
 		close(sock_fd);
 		sock_fd = -1;
 	}
 
-	get_smartconfig_ok = 1;
-
 	return NULL;
 
 error_socket:
-	if (sock_fd)
+	if (sock_fd) {
 		close(sock_fd);
-	if (pd)
-		pcap_close(pd);
+		sock_fd = -1;
+	}
+
 error_pcap:
-	timer_delete(timerid);
+	if (pd) {
+		pcap_close(pd);
+		pd = NULL;
+	}
+error_timer:
+	if (timerid) {
+		timer_delete(timerid);
+		timerid = 0;
+	}
 error_iface:
 
 	return NULL;
@@ -1025,7 +1033,7 @@ int jolin_smartlink_start(char *iface)
 	printf("smartconfig start\n");
 
 	pthread_t smartconfig_t;
-	pthread_create(&smartconfig_t, NULL, __jolin_smartlink_start, iface);
+	pthread_create(&smartconfig_t, NULL, thread_smartlink_start, iface);
 	pthread_detach(smartconfig_t);
 
 	return 0;
@@ -1033,8 +1041,20 @@ int jolin_smartlink_start(char *iface)
 
 int jolin_smartlink_stop()
 {
+	struct smartconfig *sc = &SC;
+
+	if (sc->timerid) {
+		printf("timer_delete\n");
+		timer_delete(sc->timerid);
+		sc->timerid = 0;
+	}
+
+	if (sc->pd)
+		pcap_breakloop(sc->pd);
+
 	get_source_mac = 0;
 	get_smartconfig_ok = 0;
+	memset(from_source_mac, 0, sizeof(from_source_mac));
 
 	printf("smartconfig stop\n");
 
