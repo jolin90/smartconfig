@@ -1,13 +1,23 @@
-# sudo apt-get install libpcap-dev
+CFLAGS=-g -O2 -Wall
+CC=gcc
 
-BUILD_DIR := out
+PROG=smartlink
 
-update:
-	@ make -C ${BUILD_DIR}
+all: $(PROG)
 
-all: clean
-	@ mkdir -p $(BUILD_DIR)
-	@ cd $(BUILD_DIR) && cmake .. && make
+LIBS= -lrt -lpthread -lpcap
+
+smartlink: main.o smartconfig.o cpack.o crc32.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+
+main.o: smartconfig.h
+
+cpack.o: cpack.h extract.h
+
+crc32.o: crc32.h
+
+smartconfig.o: smartconfig.h extract.h cpack.h crc32.h
+
 
 clean:
-	@ rm $(BUILD_DIR) -rf
+	rm -f *.o $(PROG)

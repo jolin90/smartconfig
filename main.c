@@ -31,7 +31,8 @@
 #include <signal.h>
 #include <time.h>
 #include <pthread.h>
-#include <smartconfig.h>
+
+#include "smartconfig.h"
 
 int main(int argc, char *argv[])
 {
