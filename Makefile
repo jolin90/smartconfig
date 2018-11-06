@@ -1,13 +1,26 @@
-# sudo apt-get install libpcap-dev
+CFLAGS=-O2 -Wall
+CC=gcc
 
-BUILD_DIR := out
+PROG=smartlink
 
-update:
-	@ make -C ${BUILD_DIR}
+all: $(PROG)
 
-all: clean
-	@ mkdir -p $(BUILD_DIR)
-	@ cd $(BUILD_DIR) && cmake .. && make
+LIBS= -lrt -lpthread
+
+smartlink: cpack.o crc32.o eloop.o iface.o pcap.o smartconfig.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+
+cpack.o: cpack.h extract.h
+
+crc32.o: crc32.h
+
+eloop.o: eloop.h list.h
+
+iface.o: iface.h
+
+pcap.o: pcap.h crc32.h cpack.h extract.h iface.h
+
+smartconfig.o: eloop.h iface.h pcap.h
 
 clean:
-	@ rm $(BUILD_DIR) -rf
+	rm -f *.o $(PROG)
