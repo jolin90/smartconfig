@@ -17,7 +17,6 @@
 #define os_realloc(p, s) realloc((p), (s))
 #define os_free(p) free((p))
 
-
 static void *os_realloc_array(void *ptr, size_t nmemb, size_t size)
 {
 	if (size && nmemb > (~(size_t) 0) / size)
@@ -378,6 +377,8 @@ int eloop_deplete_timeout(unsigned int req_secs, unsigned int req_usecs,
 	struct os_reltime now, requested, remaining;
 	struct eloop_timeout *tmp;
 
+	bzero(&now, sizeof(struct os_reltime));
+
 	dl_list_for_each(tmp, &eloop.timeout, struct eloop_timeout, list) {
 		if (tmp->handler == handler && tmp->eloop_data == eloop_data && tmp->user_data == user_data) {
 			requested.sec = req_secs;
@@ -411,6 +412,8 @@ void eloop_run(void)
 	int res;
 
 	struct os_reltime tv, now;
+
+	bzero(&now, sizeof(struct os_reltime));
 
 	while (!eloop.terminate &&
 		   (!dl_list_empty(&eloop.timeout) || eloop.readers.count > 0 ||

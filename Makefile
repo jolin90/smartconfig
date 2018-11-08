@@ -1,4 +1,4 @@
-CFLAGS=-O2 -Wall
+CFLAGS=-g -O3 -Wall
 CC=gcc
 
 PROG=smartlink
