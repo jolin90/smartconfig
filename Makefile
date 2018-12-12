@@ -1,11 +1,11 @@
-CFLAGS=-g -O3 -Wall
-CC=gcc
+CFLAGS = -g -O3 -Wall
+CC = gcc
 
-PROG=smartlink
+PROG = smartlink mcast_app
 
 all: $(PROG)
 
-LIBS= -lrt -lpthread
+LIBS = -lrt
 
 smartlink: cpack.o crc32.o eloop.o iface.o pcap.o smartconfig.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
@@ -21,6 +21,9 @@ iface.o: iface.h
 pcap.o: pcap.h crc32.h cpack.h extract.h iface.h
 
 smartconfig.o: eloop.h iface.h pcap.h
+
+mcast_app: mcast.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 clean:
 	rm -f *.o $(PROG)
