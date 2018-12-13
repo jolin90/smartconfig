@@ -60,8 +60,10 @@ int main(int argc, char *argv[])
 	struct smartconfig SC, *sc;
 
 	device = argv[1];
-	if (!device)
+	if (!device) {
+		printf("usage %s [interface]\n", argv[0]);
 		exit(1);
+	}
 
 	pthread_mutex_init(&mutex, NULL);
 
