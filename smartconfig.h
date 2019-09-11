@@ -40,10 +40,8 @@
 #define FC_PROTECTED(fc)    ((fc) & 0x4000)
 #define FC_ORDER(fc)        ((fc) & 0x8000)
 
-#define strlcpy(x, y, z)                     \
-    (strncpy((x), (y), (z)),                 \
-     ((z) <= 0 ? 0 : ((x)[(z) - 1] = '\0')), \
-     strlen((y)))
+#define strlcpy(x, y, z)  (strncpy((x), (y), (z)))
+
 
 #define CHAN2G(_channel, _freq) {           \
     .hw_value       = (_channel),           \
