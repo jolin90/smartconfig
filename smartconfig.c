@@ -42,7 +42,7 @@ static void smartconfig_timeout_handler(void *eloop_data, void *user_ctx)
 	struct smartconfig *sc = (struct smartconfig *)eloop_data;
 
 	if ((sc->sock_fd < 0) || (!sc->device)) {
-		printf("%s %d device:%s\nn", __func__, __LINE__, sc->device);
+		printf("%s %d device is NUll\nn", __func__, __LINE__);
 		return;
 	}
 

@@ -196,7 +196,7 @@ int iface_set_freq(int sock_fd, const char *device, int freq)
 	int ret = 0;
 
 	if (!device) {
-		printf("%s: %s is null\n", __func__, device);
+		printf("%s: device is null\n", __func__);
 		return -1;
 	}
 
